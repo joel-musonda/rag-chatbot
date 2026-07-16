@@ -11,15 +11,17 @@ from langchain_pinecone import PineconeVectorStore
 from langchain_google_genai import GoogleGenerativeAIEmbeddings
 from langchain_core.documents import Document
 
-#documents
+#loading the document preview
 from langchain_community.document_loaders import PyPDFDirectoryLoader
 from langchain_text_splitters import RecursiveCharacterTextSplitter
 
 load_dotenv() 
 
+
+#connecting to the pinecone api key
 pc = Pinecone(api_key=os.environ.get("PINECONE_API_KEY"))
 
-# initialize pinecone database
+# initializing pinecone database
 index_name = os.environ.get("PINECONE_INDEX_NAME")  # change if desired
 
 # check whether index exists, and create if not
@@ -37,8 +39,11 @@ if index_name not in existing_indexes:
 
 index = pc.Index(index_name)
 
-# initialize embeddings model + vector store
-embeddings = GoogleGenerativeAIEmbeddings(model="gemini-embedding-2-preview", google_api_key=os.environ.get("GOOGLE_API_KEY"))
+# initialize embeddings model 
+embeddings = GoogleGenerativeAIEmbeddings(
+    model="gemini-embedding-2-preview",
+    google_api_key=os.environ.get("GOOGLE_API_KEY")
+    )
 
 vector_store = PineconeVectorStore(index=index, embedding=embeddings)
 
