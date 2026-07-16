@@ -127,7 +127,7 @@ with st.sidebar:
 
     if st.session_state.active_doc:
         st.write("---")
-        if st.button("🏠 Return to Dashboard", use_container_width=True, key="dashboard_return_btn"):
+        if st.button("Return to Dashboard", use_container_width=True, key="dashboard_return_btn"):
             st.session_state.active_doc = None
             st.session_state.show_chat = False
             st.rerun()
@@ -160,7 +160,7 @@ if st.session_state.active_doc:
         with col_header_title:
             st.markdown(f"<h3 style='color:#f8fafc; margin:0;'>Nzelu AI Chat // {active_doc.upper()}</h3>", unsafe_allow_html=True)
         with col_header_close:
-            if st.button("❌ Close Chat & View Doc", use_container_width=True, key="close_chat_overlay_btn"):
+            if st.button("Close Chat & View Doc", use_container_width=True, key="close_chat_overlay_btn"):
                 st.session_state.show_chat = False
                 st.rerun()
         
@@ -244,7 +244,7 @@ if st.session_state.active_doc:
         col_space, col_fab = st.columns([0.8, 0.2])
         with col_fab:
             st.markdown('<div class="fab-container">', unsafe_allow_html=True)
-            if st.button("💬 Ask Nzelu AI", key="fab_chat_trigger_btn", help="Open AI Chat Assistant", use_container_width=True):
+            if st.button("Ask Nzelu AI", key="fab_chat_trigger_btn", help="Open AI Chat Assistant", use_container_width=True):
                 st.session_state.show_chat = True
                 st.rerun()
             st.markdown('</div>', unsafe_allow_html=True)
