@@ -1,6 +1,7 @@
 import streamlit as st
 import os
 import base64
+import time
 from dotenv import load_dotenv
 
 # import pinecone
@@ -71,12 +72,18 @@ if uploaded_file is not None:
                 except Exception:
                     text = bytes_data.decode("latin-1", errors="ignore")
 
-            # Split text and index to Pinecone with source metadata
-            text_splitter = RecursiveCharacterTextSplitter(chunk_size=1000, chunk_overlap=200)
+            # Split text and index to Pinecone with source metadata using safe batching
+            text_splitter = RecursiveCharacterTextSplitter(chunk_size=1500, chunk_overlap=200)
             docs = [Document(page_content=t, metadata={"source": file_name}) for t in text_splitter.split_text(text)]
             
             if docs:
-                vector_store.add_documents(docs)
+                # Manually batch and embed documents sequentially to prevent multi-processing API crashes & rate limits
+                batch_size = 3
+                for i in range(0, len(docs), batch_size):
+                    batch = docs[i:i + batch_size]
+                    vector_store.add_documents(batch)
+                    time.sleep(1.5)  # Brief pause between batches to respect token rate limits
+
                 st.sidebar.success(f"Indexed {file_name} successfully!")
 
 # File selector dropdown
