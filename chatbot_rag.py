@@ -7,9 +7,10 @@ from dotenv import load_dotenv
 # import pinecone
 from pinecone import Pinecone, ServerlessSpec
 
-# import langchain & google genai
+# import langchain & google genai / huggingface
 from langchain_pinecone import PineconeVectorStore
-from langchain_google_genai import GoogleGenerativeAIEmbeddings, ChatGoogleGenerativeAI
+from langchain_huggingface import HuggingFaceEmbeddings
+from langchain_google_genai import ChatGoogleGenerativeAI
 from langchain_core.messages import HumanMessage, SystemMessage, AIMessage
 from langchain_text_splitters import RecursiveCharacterTextSplitter
 from langchain_core.documents import Document
@@ -21,12 +22,12 @@ st.set_page_config(page_title="Nzelu AI Workspace", layout="wide")
 st.title("Nzelu AI Study Workspace")
 
 # -------------------------------------------------------------
-# 1. Initialize Pinecone & Ensure Standard Vector Index Exists
+# 1. Initialize Pinecone & Models
 # -------------------------------------------------------------
 pc = Pinecone(api_key=os.environ.get("PINECONE_API_KEY"))
 index_name = os.environ.get("PINECONE_INDEX_NAME", "edu-app")
 
-# Programmatically create a standard vector index (no document schemas) if it doesn't exist
+# Ensure standard vector index exists (768 dimensions, cosine metric)
 existing_indexes = [idx["name"] for idx in pc.list_indexes()]
 if index_name not in existing_indexes:
     pc.create_index(
@@ -38,13 +39,11 @@ if index_name not in existing_indexes:
 
 index = pc.Index(index_name)
 
-embeddings = GoogleGenerativeAIEmbeddings(
-    model="gemini-embedding-001",
-    google_api_key=os.environ.get("GOOGLE_API_KEY"),
-    output_dimensionality=768  # Forces Gemini to output 768 dimensions to match Pinecone
-)
+# Use HuggingFace local embeddings (natively outputs 768 dimensions to match Pinecone)
+embeddings = HuggingFaceEmbeddings(model_name="all-mpnet-base-v2")
 vector_store = PineconeVectorStore(index=index, embedding=embeddings)
 
+# Keep Gemini for the AI Tutor chat responses
 llm = ChatGoogleGenerativeAI(
     model="gemini-2.5-flash",
     temperature=0.7,
@@ -82,17 +81,16 @@ if uploaded_file is not None:
                 except Exception:
                     text = bytes_data.decode("latin-1", errors="ignore")
 
-            # Split text and index to Pinecone with source metadata using safe batching
+            # Split text and index to Pinecone with source metadata
             text_splitter = RecursiveCharacterTextSplitter(chunk_size=1500, chunk_overlap=200)
             docs = [Document(page_content=t, metadata={"source": file_name}) for t in text_splitter.split_text(text)]
             
             if docs:
-                # Manually batch and embed documents sequentially to prevent multi-processing API crashes & rate limits
-                batch_size = 3
+                # Batch upsert safely
+                batch_size = 5
                 for i in range(0, len(docs), batch_size):
                     batch = docs[i:i + batch_size]
                     vector_store.add_documents(batch)
-                    time.sleep(1.5)
 
                 st.sidebar.success(f"Indexed {file_name} successfully!")
 
