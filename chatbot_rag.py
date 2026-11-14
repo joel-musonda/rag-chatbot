@@ -97,7 +97,7 @@ if current_chat_key not in st.session_state.file_messages:
 col_pdf, col_chat = st.columns([1.2, 1])
 
 with col_pdf:
-    st.subheader(f"📄 Viewer: {selected_file if selected_file != 'No documents uploaded' else 'None'}")
+    st.subheader(f"{selected_file if selected_file != 'No documents uploaded' else 'None'}")
     if selected_file != "No documents uploaded" and selected_file in st.session_state.uploaded_files_cache:
         file_bytes = st.session_state.uploaded_files_cache[selected_file]
         base64_pdf = base64.b64encode(file_bytes).decode('utf-8')
