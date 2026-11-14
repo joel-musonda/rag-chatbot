@@ -21,13 +21,14 @@ st.set_page_config(page_title="Nzelu AI Workspace", layout="wide")
 st.title("Nzelu AI Study Workspace")
 
 # -------------------------------------------------------------
-# 1. Initialize Pinecone & Gemini Models
+# 1. Initialize Pinecone & Ensure Standard Vector Index Exists
 # -------------------------------------------------------------
 pc = Pinecone(api_key=os.environ.get("PINECONE_API_KEY"))
 index_name = os.environ.get("PINECONE_INDEX_NAME", "edu-app")
 
-# Automatically ensure the index exists as a standard vector index (768 dims, cosine)
-if not pc.has_index(index_name):
+# Programmatically create a standard vector index (no document schemas) if it doesn't exist
+existing_indexes = [idx["name"] for idx in pc.list_indexes()]
+if index_name not in existing_indexes:
     pc.create_index(
         name=index_name,
         dimension=768,
@@ -69,11 +70,10 @@ if uploaded_file is not None:
             bytes_data = uploaded_file.read()
             st.session_state.uploaded_files_cache[file_name] = bytes_data
 
-            # Extract text (handling basic text or pdf via simple decode if txt, or PyPDF if available)
+            # Extract text
             if file_name.endswith(".txt"):
                 text = bytes_data.decode("utf-8")
             else:
-                # Fallback text extraction or library load
                 try:
                     from pypdf import PdfReader
                     import io
@@ -92,7 +92,7 @@ if uploaded_file is not None:
                 for i in range(0, len(docs), batch_size):
                     batch = docs[i:i + batch_size]
                     vector_store.add_documents(batch)
-                    time.sleep(1.5)  # Brief pause between batches to respect token rate limits
+                    time.sleep(1.5)
 
                 st.sidebar.success(f"Indexed {file_name} successfully!")
 
@@ -160,7 +160,6 @@ with col_chat:
         docs = retriever.invoke(prompt)
         docs_text = "\n\n".join(d.page_content for d in docs)
 
-        # Updated System Prompt with analogies and case studies requirement
         system_prompt = f"""You are Nzelu ai, an expert AI tutor and study assistant created by Joel Musonda. 
         Answer the student's question based strictly on the provided document context below. 
         To help the student master the concept deeply, you MUST include:
@@ -174,7 +173,6 @@ with col_chat:
         {docs_text}
         """
 
-        # Clean and strictly enforce user/AI role alternation for Gemini
         cleaned_history = []
         last_role = None
         for m in st.session_state.file_messages[current_chat_key][:-1]:
