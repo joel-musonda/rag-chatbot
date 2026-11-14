@@ -112,12 +112,34 @@ if current_chat_key not in st.session_state.file_messages:
 col_pdf, col_chat = st.columns([1.2, 1])
 
 with col_pdf:
-    st.subheader(f"{selected_file if selected_file != 'No documents uploaded' else 'None'}")
+    st.subheader(f"📄 {selected_file if selected_file != 'No documents uploaded' else 'None'}")
     if selected_file != "No documents uploaded" and selected_file in st.session_state.uploaded_files_cache:
         file_bytes = st.session_state.uploaded_files_cache[selected_file]
-        base64_pdf = base64.b64encode(file_bytes).decode('utf-8')
-        pdf_display = f'<iframe src="data:application/pdf;base64,{base64_pdf}#toolbar=0&navpanes=0" width="100%" height="600px" type="application/pdf"></iframe>'
-        st.markdown(pdf_display, unsafe_allow_html=True)
+        
+        # Check if it's a text file vs PDF
+        if selected_file.endswith(".txt"):
+            text_content = file_bytes.decode("utf-8", errors="ignore")
+            st.text_area("Document Content", text_content, height=600)
+        else:
+            try:
+                import fitz  # PyMuPDF
+                pdf_document = fitz.open(stream=file_bytes, filetype="pdf")
+                total_pages = len(pdf_document)
+                
+                if total_pages > 1:
+                    page_num = st.slider("Select Page", 1, total_pages, 1) - 1
+                else:
+                    page_num = 0
+                    
+                # Render selected page as an image
+                page = pdf_document[page_num]
+                pix = page.get_pixmap(dpi=150)
+                img_bytes = pix.tobytes("png")
+                
+                st.image(img_bytes, caption=f"Page {page_num + 1} of {total_pages}", use_container_width=True)
+                
+            except Exception as e:
+                st.error(f"Could not render PDF pages: {e}")
     else:
         st.info("Upload a document using the sidebar to view its pages here.")
 
