@@ -5,7 +5,7 @@ import time
 from dotenv import load_dotenv
 
 # import pinecone
-from pinecone import Pinecone
+from pinecone import Pinecone, ServerlessSpec
 
 # import langchain & google genai
 from langchain_pinecone import PineconeVectorStore
@@ -25,6 +25,16 @@ st.title("Nzelu AI Study Workspace")
 # -------------------------------------------------------------
 pc = Pinecone(api_key=os.environ.get("PINECONE_API_KEY"))
 index_name = os.environ.get("PINECONE_INDEX_NAME", "edu-app")
+
+# Automatically ensure the index exists as a standard vector index (768 dims, cosine)
+if not pc.has_index(index_name):
+    pc.create_index(
+        name=index_name,
+        dimension=768,
+        metric="cosine",
+        spec=ServerlessSpec(cloud="aws", region="us-east-1")
+    )
+
 index = pc.Index(index_name)
 
 embeddings = GoogleGenerativeAIEmbeddings(
