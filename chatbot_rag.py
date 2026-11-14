@@ -1,180 +1,175 @@
 import streamlit as st
 import os
+import base64
 from dotenv import load_dotenv
-from pypdf import PdfReader
+
+# import pinecone
 from pinecone import Pinecone
-from streamlit_pdf_viewer import pdf_viewer
+
+# import langchain & google genai
 from langchain_pinecone import PineconeVectorStore
-from langchain_google_genai import GoogleGenerativeAIEmbeddings, GoogleGenerativeAI
+from langchain_google_genai import GoogleGenerativeAIEmbeddings, ChatGoogleGenerativeAI
 from langchain_core.messages import HumanMessage, SystemMessage, AIMessage
 from langchain_text_splitters import RecursiveCharacterTextSplitter
-
-# Set wide layout to accommodate the 3-panel system comfortably
-st.set_page_config(layout="wide", page_title="Nzelu AI", page_icon="")
+from langchain_core.documents import Document
 
 load_dotenv()
 
-# --- INITIALIZE CORE INFRASTRUCTURE ---
+st.set_page_config(page_title="Nzelu AI Study Workspace", layout="wide")
+
+st.title("Nzelu AI Study Workspace")
+
+# -------------------------------------------------------------
+# 1. Initialize Pinecone & Gemini Models
+# -------------------------------------------------------------
 pc = Pinecone(api_key=os.environ.get("PINECONE_API_KEY"))
-index_name = os.environ.get("PINECONE_INDEX_NAME")
+index_name = os.environ.get("PINECONE_INDEX_NAME", "edu-app")
 index = pc.Index(index_name)
 
 embeddings = GoogleGenerativeAIEmbeddings(
-    model="gemini-embedding-2-preview", 
-    google_api_key=os.environ.get("GOOGLE_API_KEY")
+    model="gemini-embedding-001",
+    google_api_key=os.environ.get("GOOGLE_API_KEY"),
+    output_dimensionality=768  # Matches your 768-dimension index configuration
 )
 vector_store = PineconeVectorStore(index=index, embedding=embeddings)
 
-# Initialize Session State Variables
-if "library" not in st.session_state:
-    st.session_state.library = {}  # Format: { "filename.pdf": bytes_data }
-if "active_doc" not in st.session_state:
-    st.session_state.active_doc = None
-if "chat_histories" not in st.session_state:
-    st.session_state.chat_histories = {} # Format: { "filename.pdf": [messages] }
+llm = ChatGoogleGenerativeAI(
+    model="gemini-2.5-flash",
+    temperature=0.7,
+    google_api_key=os.environ.get("GOOGLE_API_KEY")
+)
 
-# --- PANEL 1: LEFT SIDEBAR (LIBRARY & MANAGEMENT) ---
-with st.sidebar:
-    st.title("Nzelu AI")
-    
-    # Custom Styled Upload Button
-    uploaded_file = st.file_uploader("Upload PDF", type=["pdf"], label_visibility="collapsed")
-    
-    if uploaded_file is not None:
-        if uploaded_file.name not in st.session_state.library:
-            with st.spinner(f"Ingesting {uploaded_file.name}..."):
-                # Read bytes for rendering and text for vector database
-                bytes_data = uploaded_file.read()
-                st.session_state.library[uploaded_file.name] = bytes_data
-                
-                # Extract text
-                pdf_reader = PdfReader(uploaded_file)
-                raw_text = "".join([page.extract_text() or "" for page in pdf_reader.pages])
-                
-                if raw_text.strip():
-                    text_splitter = RecursiveCharacterTextSplitter(chunk_size=1000, chunk_overlap=200)
-                    chunks = text_splitter.split_text(raw_text)
-                    
-                    # Core Engineering fix: Pass metadatas so documents don't blend together!
-                    metadatas = [{"source": uploaded_file.name} for _ in chunks]
-                    vector_store.add_texts(texts=chunks, metadatas=metadatas)
-                    
-                    st.session_state.active_doc = uploaded_file.name
-                    st.success("Indexed successfully!")
-                else:
-                    st.error("Unreadable text formatting.")
+# -------------------------------------------------------------
+# 2. Sidebar: Document Upload & Selection
+# -------------------------------------------------------------
+st.sidebar.header("📁 Study Workspaces")
 
-    st.write("---")
-    st.subheader("YOUR LIBRARY")
-    
-    # Render library items as interactive selection links
-    if st.session_state.library:
-        for doc_name in st.session_state.library.keys():
-            # Bold the currently selected document
-            label = f" **{doc_name}**" if doc_name == st.session_state.active_doc else f"📄 {doc_name}"
-            if st.button(label, key=doc_name, use_container_width=True):
-                st.session_state.active_doc = doc_name
-                st.rerun()
+uploaded_file = st.sidebar.file_uploader("Upload a PDF or TXT file", type=["pdf", "txt"])
+
+# Track uploaded documents in session state
+if "uploaded_files_cache" not in st.session_state:
+    st.session_state.uploaded_files_cache = {}
+
+if uploaded_file is not None:
+    file_name = uploaded_file.name
+    if file_name not in st.session_state.uploaded_files_cache:
+        with st.spinner(f"Processing and indexing {file_name}..."):
+            # Read file bytes
+            bytes_data = uploaded_file.read()
+            st.session_state.uploaded_files_cache[file_name] = bytes_data
+
+            # Extract text (handling basic text or pdf via simple decode if txt, or PyPDF if available)
+            if file_name.endswith(".txt"):
+                text = bytes_data.decode("utf-8")
+            else:
+                # Fallback text extraction or library load
+                try:
+                    from pypdf import PdfReader
+                    import io
+                    reader = PdfReader(io.BytesIO(bytes_data))
+                    text = "".join([page.extract_text() or "" for page in reader.pages])
+                except Exception:
+                    text = bytes_data.decode("latin-1", errors="ignore")
+
+            # Split text and index to Pinecone with source metadata
+            text_splitter = RecursiveCharacterTextSplitter(chunk_size=1000, chunk_overlap=200)
+            docs = [Document(page_content=t, metadata={"source": file_name}) for t in text_splitter.split_text(text)]
+            
+            if docs:
+                vector_store.add_documents(docs)
+                st.sidebar.success(f"Indexed {file_name} successfully!")
+
+# File selector dropdown
+file_list = list(st.session_state.uploaded_files_cache.keys())
+selected_file = st.sidebar.selectbox("Active Study Document", file_list if file_list else ["No documents uploaded"])
+
+# Initialize isolated chat history dictionary per file
+if "file_messages" not in st.session_state:
+    st.session_state.file_messages = {}
+
+current_chat_key = selected_file if selected_file != "No documents uploaded" else "default"
+if current_chat_key not in st.session_state.file_messages:
+    st.session_state.file_messages[current_chat_key] = []
+
+# -------------------------------------------------------------
+# 3. Main Layout: Split View (PDF Viewer on Left, Chat on Right)
+# -------------------------------------------------------------
+col_pdf, col_chat = st.columns([1.2, 1])
+
+with col_pdf:
+    st.subheader(f"📄 Viewer: {selected_file if selected_file != 'No documents uploaded' else 'None'}")
+    if selected_file != "No documents uploaded" and selected_file in st.session_state.uploaded_files_cache:
+        file_bytes = st.session_state.uploaded_files_cache[selected_file]
+        base64_pdf = base64.b64encode(file_bytes).decode('utf-8')
+        pdf_display = f'<iframe src="data:application/pdf;base64,{base64_pdf}#toolbar=0&navpanes=0" width="100%" height="600px" type="application/pdf"></iframe>'
+        st.markdown(pdf_display, unsafe_allow_html=True)
     else:
-        st.info("No documents uploaded yet.")
+        st.info("Upload a document using the sidebar to view its pages here.")
 
-# --- THE THREE-PANEL CORE LAYOUT ---
-if st.session_state.active_doc:
-    # Split the main viewport into two large matching blocks: Center (PDF) and Right (Chat)
-    col_pdf, col_chat = st.columns([1.1, 0.9], gap="large")
-    
-    # --- PANEL 2: CENTER VIEWPORT (PDF READER) ---
-    with col_pdf:
-        st.subheader(f"Viewing: {st.session_state.active_doc}")
-        # Fetch the cached local byte arrays and display them frame-perfect
-        pdf_bytes = st.session_state.library[st.session_state.active_doc]
-        
-        # Render clean native scrollable PDF view space
-        pdf_viewer(input=pdf_bytes, height=750)
+with col_chat:
+    st.subheader("💬 Nzelu AI Tutor")
 
-    # --- PANEL 3: RIGHT VIEWPORT (STATEFUL CONTEXTUAL CHAT) ---
-    with col_chat:
-        st.markdown("Stay Curious")
-        st.caption("Continue asking questions.")
+    # Display chat history for the active document
+    chat_container = st.container(height=450)
+    with chat_container:
+        messages = st.session_state.file_messages[current_chat_key]
+        if not messages:
+            st.markdown("*Hello! Ask any question about your active document.*")
         
-        # Isolate history per document so switching papers doesn't pollute the chat window
-        active_doc = st.session_state.active_doc
-        if active_doc not in st.session_state.chat_histories:
-            st.session_state.chat_histories[active_doc] = [
-                SystemMessage(content="You are Nzelu AI. Use the provided context to answer the user's questions perfectly.")
-            ]
-            
-        current_history = st.session_state.chat_histories[active_doc]
-        
-        # Container to hold chat history for clean scrolling layout
-        chat_container = st.container(height=550)
+        for msg in messages:
+            with st.chat_message(msg["role"]):
+                st.markdown(msg["content"])
+
+    # User chat input bar
+    prompt = st.chat_input("Ask about your study material...")
+
+    if prompt and selected_file != "No documents uploaded":
+        # Append user message
+        st.session_state.file_messages[current_chat_key].append({"role": "user", "content": prompt})
         with chat_container:
-            for message in current_history:
-                if isinstance(message, HumanMessage):
-                    with st.chat_message("user"):
-                        st.markdown(message.content)
-                elif isinstance(message, AIMessage):
-                    with st.chat_message("assistant"):
-                        st.markdown(message.content)
-                        
-        # User input execution thread
-        prompt = st.chat_input("Ask a question about your PDF...")
+            with st.chat_message("user"):
+                st.markdown(prompt)
+
+        # Retrieve relevant chunks strictly filtered by the active file name
+        retriever = vector_store.as_retriever(
+            search_type="similarity_score_threshold",
+            search_kwargs={
+                "k": 4, 
+                "score_threshold": 0.4,
+                "filter": {"source": selected_file}
+            },
+        )
+
+        docs = retriever.invoke(prompt)
+        docs_text = "\n\n".join(d.page_content for d in docs)
+
+        # Updated System Prompt with analogies and case studies requirement
+        system_prompt = f"""You are Nzelu ai, an expert AI tutor and study assistant created by Joel Musonda. 
+        Answer the student's question based strictly on the provided document context below. 
+        To help the student master the concept deeply, you MUST include:
+        1. A clear explanation of the answer.
+        2. A memorable, creative real-world analogy.
+        3. A brief practical case study or scenario demonstrating how this concept applies.
         
-        if prompt:
-            with chat_container:
-                with st.chat_message("user"):
-                    st.markdown(prompt)
-            current_history.append(HumanMessage(content=prompt))
-            
-            # 1. INITIALIZE VARIABLES SECURELY OUTSIDE THE TRY BLOCK
-            docs_text = "" 
-            
-            # Setup metadata-strict Vector search
-            retriever = vector_store.as_retriever(
-                search_type="similarity_score_threshold",
-                search_kwargs={
-                    "k": 3, 
-                    "score_threshold": 0.25,
-                    "filter": {"source": active_doc} 
-                },
-            )
-            
-            # 2. RUN SEARCH AND EXTRACT CONTEXT TEXT
-            try:
-                docs = retriever.invoke(prompt)
-                docs_text = "".join(d.page_content for d in docs)
-            except Exception as e:
-                # Fallback if index retrieval experiences a hiccup
-                docs_text = ""
-                
-            #  COMPILE SYSTEM INSTRUCTIONS 
-            # ---System Prompt ---
-            system_prompt = f"""You are Nzelu AI, an assistant that helps students and scholars better understand concepts by answering questions they may have while they study and providing augmented or better explainations than the material may have.
-            you were developed by a group of Cambridge A-level students at Crucible Lusaka as a way of putting a highly intelligent private tutor in every student's pocket.
-Use the following pieces of retrieved context from '{active_doc}' to answer the question or better explain the concept by using analogies and real world scenarios that users may relate to. 
-If you don't know the answer based on the context, state clearly that the document doesn't explicitly mention it but state what you think it might be.
-Keep answers precise and clean. Make sure to add questions, ideas, projects, case studies or real world scenarios that provoke the student to ask more questions, want to learn more, think about it or study the topic further. create real world scenarios that better explains the concept in the context provided. 
+        If the context does not contain enough information to answer, state clearly that the document does not contain the answer.
 
-Context:
-{docs_text}"""
+        Context:
+        {docs_text}
+        """
 
-            llm = GoogleGenerativeAI(
-                model="gemini-2.5-flash", 
-                temperature=0.5, 
-                google_api_key=os.environ.get("GOOGLE_API_KEY")
-            )
+        # Build context payload for Gemini
+        chat_history_objs = [
+            HumanMessage(content=m["content"]) if m["role"] == "user" else AIMessage(content=m["content"])
+            for m in st.session_state.file_messages[current_chat_key][:-1]
+        ]
+        
+        messages_for_llm = [SystemMessage(content=system_prompt)] + chat_history_objs + [HumanMessage(content=prompt)]
 
-            # Prepend the SystemMessage to the payload securely
-            payload = [SystemMessage(content=system_prompt)] + [msg for msg in current_history if not isinstance(msg, SystemMessage)]
-            
-            with chat_container:
-                with st.chat_message("assistant"):
-                    response_obj = llm.invoke(payload)
-                    result = response_obj.content if hasattr(response_obj, 'content') else response_obj
+        with chat_container:
+            with st.chat_message("assistant"):
+                with st.spinner("Generating insights, analogies, and case studies..."):
+                    result = llm.invoke(messages_for_llm).content
                     st.markdown(result)
-            
-            current_history.append(AIMessage(content=result))
-            st.session_state.chat_histories[active_doc] = current_history
-            st.rerun()
-else:
-    st.info("Welcome! Please upload a PDF document in the sidebar to begin analyzing your workspace library.")
+                    st.session_state.file_messages[current_chat_key].append({"role": "assistant", "content": result})
+    elif prompt and selected_file == "No documents uploaded":
+        st.warning("Please upload a document in the sidebar first before chatting.")
