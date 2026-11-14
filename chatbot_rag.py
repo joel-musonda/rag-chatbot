@@ -15,7 +15,7 @@ from langchain_core.documents import Document
 
 load_dotenv()
 
-st.set_page_config(page_title="Nzelu AI Study Workspace", layout="wide")
+st.set_page_config(page_title="Nzelu AI Workspace", layout="wide")
 
 st.title("Nzelu AI Study Workspace")
 
@@ -157,13 +157,19 @@ with col_chat:
         {docs_text}
         """
 
-        # Build context payload for Gemini
-        chat_history_objs = [
-            HumanMessage(content=m["content"]) if m["role"] == "user" else AIMessage(content=m["content"])
-            for m in st.session_state.file_messages[current_chat_key][:-1]
-        ]
-        
-        messages_for_llm = [SystemMessage(content=system_prompt)] + chat_history_objs + [HumanMessage(content=prompt)]
+        # Clean and strictly enforce user/AI role alternation for Gemini
+        cleaned_history = []
+        last_role = None
+        for m in st.session_state.file_messages[current_chat_key][:-1]:
+            role = m["role"]
+            if role != last_role:
+                if role == "user":
+                    cleaned_history.append(HumanMessage(content=m["content"]))
+                else:
+                    cleaned_history.append(AIMessage(content=m["content"]))
+                last_role = role
+
+        messages_for_llm = [SystemMessage(content=system_prompt)] + cleaned_history + [HumanMessage(content=prompt)]
 
         with chat_container:
             with st.chat_message("assistant"):
