@@ -30,7 +30,7 @@ index = pc.Index(index_name)
 embeddings = GoogleGenerativeAIEmbeddings(
     model="gemini-embedding-001",
     google_api_key=os.environ.get("GOOGLE_API_KEY"),
-    output_dimensionality=768  # Matches your 768-dimension index configuration
+    output_dimensionality=768  # Forces Gemini to output 768 dimensions to match Pinecone
 )
 vector_store = PineconeVectorStore(index=index, embedding=embeddings)
 
